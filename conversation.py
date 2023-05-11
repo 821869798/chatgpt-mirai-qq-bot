@@ -77,6 +77,7 @@ class ConversationContext:
 
         self.last_resp_time = -1
 
+        self.ai_img_render = None
         self.switch_renderer()
 
         if config.text_to_speech.always:
@@ -144,6 +145,11 @@ class ConversationContext:
             self.renderer = PlainTextRenderer(self.merger)
         else:
             self.renderer = MixedContentMessageChainRenderer(self.merger)
+        if self.ai_img_render is None:
+            splitter = MultipleSegmentSplitter()
+            merger = BufferedContentMerger(splitter)
+            self.ai_img_render = PlainTextRenderer(merger)
+
         if mode != "image" and config.text_to_image.always:
             raise CommandRefusedException("不要！由于配置文件设置强制开了图片模式，我不会切换到其他任何模式。")
 
@@ -156,6 +162,42 @@ class ConversationContext:
     @retry((httpx.ConnectError, httpx.ConnectTimeout, TimeoutError))
     async def ask(self, prompt: str, chain: MessageChain = None, name: str = None):
         await self.check_and_reset()
+        # 检查是否为 ai调用画图指令
+        for prefix in config.trigger.prefix_ai_image:
+            if prompt.startswith(prefix) and not isinstance(self.adapter, YiyanAdapter):
+                prompt = prompt.removeprefix(prefix)
+                prompt = config.trigger.ai_image_rule.replace("{prompt}", prompt)
+                async with self.ai_img_render:
+                    async for item in self.adapter.ask(prompt):
+                        if not isinstance(item, Element) and item != prompt:
+                            await self.ai_img_render.render(item)
+                    result = await self.ai_img_render.result()
+                    logger.debug(f"call ai draw result is:{result.display}")
+                    prompt = result.display
+                    # TODO(lss233): 此部分可合并至 RateLimitMiddleware
+                    respond_str = middlewares.handle_draw_request(self.session_id,prompt)
+                    # TODO(lss233): 这什么玩意
+                    if respond_str != "1":
+                        yield respond_str
+                        return
+                    if not self.drawing_adapter:
+                        yield "未配置画图引擎，无法使用画图功能！"
+                        return
+                    try:
+                        if chain.has(GraiaImage):
+                            images = await self.drawing_adapter.img_to_img(chain.get(GraiaImage), prompt)
+                        else:
+                            images = await self.drawing_adapter.text_to_img(prompt)
+                        for i in images:
+                            yield i
+                    except Exception as e:
+                        raise DrawingFailedException from e
+                    respond_str = middlewares.handle_draw_respond_completed(self.session_id, prompt)
+                    if respond_str != "1":
+                        yield respond_str
+                    return
+                return
+
         # 检查是否为 画图指令
         for prefix in config.trigger.prefix_image:
             if prompt.startswith(prefix) and not isinstance(self.adapter, YiyanAdapter):

@@ -6,6 +6,7 @@ from loguru import logger
 import os
 import sys
 import toml
+import tomlkit
 
 
 class Onebot(BaseModel):
@@ -372,6 +373,9 @@ class Trigger(BaseModel):
     ping_command: List[str] = ["ping"]
     """获取服务状态"""
 
+    """ai绘图功能"""
+    prefix_ai_image: List[str] = ["ai绘图", "AI绘图"]
+    ai_image_rule: str = ""
 
 class Response(BaseModel):
     mode: str = "mixed"
@@ -612,7 +616,7 @@ class Config(BaseModel):
     @staticmethod
     def load_config() -> Config:
         if env_config := os.environ.get('CHATGPT_FOR_BOT_FULL_CONFIG', ''):
-            return Config.parse_obj(toml.loads(env_config))
+            return Config.parse_obj(tomlkit.loads(env_config))
         try:
             if (
                     not os.path.exists('config.cfg')
@@ -628,7 +632,7 @@ class Config(BaseModel):
                     logger.error("无法重命名配置文件，请自行处理。")
             with open("config.cfg", "rb") as f:
                 if guessed_str := from_bytes(f.read()).best():
-                    return Config.parse_obj(toml.loads(str(guessed_str)))
+                    return Config.parse_obj(tomlkit.loads(str(guessed_str)))
                 else:
                     raise ValueError("无法识别配置文件，请检查是否输入有误！")
         except Exception as e:
@@ -640,7 +644,7 @@ class Config(BaseModel):
     def save_config(config: Config):
         try:
             with open("config.cfg", "wb") as f:
-                parsed_str = toml.dumps(config.dict()).encode(sys.getdefaultencoding())
+                parsed_str = tomlkit.dumps(config.dict()).encode(sys.getdefaultencoding())
                 f.write(parsed_str)
         except Exception as e:
             logger.exception(e)
